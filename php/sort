@@ -1,0 +1,168 @@
+<?php
+/**
+ * Created by PhpStorm.
+ * User: czj
+ * Date: 2018-05-13
+ * Time: 21:01
+ */
+
+/**
+ * 交换位置
+ * @param $array
+ * @param $i
+ * @param $j
+ */
+function swap(&$array, $i, $j)
+{
+    $temp = $array[$i];
+    $array[$i] = $array[$j];
+    $array[$j] = $temp;
+}
+
+/**
+ * 从下调整为大顶堆
+ * @param $array
+ * @param $index
+ * @param $heapSize
+ */
+function adjust(&$array, $index, $heapSize)
+{
+    while (true) {
+        $iMax = $index;
+        $iLeft = 2 * $index + 1;
+        $iRight = 2 * ($index + 1);
+        if ($iLeft < $heapSize && $array[$index] < $array[$iLeft]) {
+            $iMax = $iLeft;
+        }
+        if ($iRight < $heapSize && $array[$iMax] < $array[$iRight]) {
+            $iMax = $iRight;
+        }
+        if ($iMax != $index) {
+            swap($array, $iMax, $index);
+            $index = $iMax;
+        } else {
+            break;
+        }
+    }
+}
+
+/**
+ * 创建大顶堆
+ * @param $array
+ * @param $heapSize
+ */
+function buildMaxHeap(&$array, $heapSize)
+{
+    $iParent = floor(($heapSize - 1) / 2);
+    for ($i = $iParent; $i >= 0; $i--) {
+        adjust($array, $i, $heapSize);
+    }
+}
+
+/**
+ * 堆排序 不稳定
+ * @param $array
+ * @param $heapSize
+ */
+function heapSort(&$array, $heapSize)
+{
+    buildMaxHeap($array, $heapSize);
+    for ($i = $heapSize - 1; $i > 0; $i--) {
+        swap($array, 0, $i);
+        adjust($array, 0, $i);
+    }
+}
+
+
+/*-----------------*/
+/**
+ * 一趟快速排序
+ * @param $arr
+ * @param $l
+ * @param $h
+ * @return mixed
+ */
+function partition(&$arr, $l, $h)
+{
+    $pivot = $arr[$l];
+    while ($l < $h) {
+        while ($l < $h && $arr[$h] >= $pivot)
+            $h--;
+        swap($arr, $l, $h);
+        while ($l < $h && $arr[$l] <= $pivot)
+            $l++;
+        swap($arr, $l, $h);
+    }
+    $arr[$l] = $pivot;
+    return $l;
+}
+
+/**
+ * 快速排序，不稳定，接近有序时，退化成冒泡
+ * @param $arr
+ * @param $l
+ * @param $h
+ */
+function quickSort(&$arr, $l, $h)
+{
+    if ($l < $h) {
+        $partition = partition($arr, $l, $h);
+        quickSort($arr, $l, $partition - 1);
+        quickSort($arr, $partition + 1, $h);
+    }
+}
+
+
+/*---------------------*/
+
+/**
+ * 合并两个有序数组
+ * @param $arr
+ * @param $l
+ * @param $m
+ * @param $r
+ */
+function mergeArray(&$arr, $l, $m, $r)
+{
+    $i = $l;
+    $j = $m + 1;
+    $tmp = [];
+    $k = 0;
+    while ($i <= $m && $j <= $r) {
+        if ($arr[$i] < $arr[$j])
+            $tmp[$k++] = $arr[$i++];
+        else
+            $tmp[$k++] = $arr[$j++];
+    }
+    while ($i <= $m) {
+        $tmp[$k++] = $arr[$i++];
+    }
+    while ($j <= $r) {
+        $tmp[$k++] = $arr[$j++];
+    }
+    for ($i = 0; $i < $k; $i++) {
+        $arr[$l + $i] = $tmp[$i];
+    }
+}
+
+/**
+ * 归并排序，稳定
+ * @param $arr
+ * @param $l
+ * @param $h
+ */
+function mergeSort(&$arr, $l, $h)
+{
+    if ($l < $h) {
+        $mid = floor(($l + $h) / 2);
+        mergeSort($arr, $l, $mid);
+        mergeSort($arr, $mid + 1, $h);
+        mergeArray($arr, $l, $mid, $h);
+    }
+}
+
+$arr = [5, 3, 10, 3, 3, 5];
+//heapSort($arr, count($arr));
+//quickSort($arr, 0, count($arr)-1);
+mergeSort($arr, 0, count($arr) - 1);
+print_r($arr);
