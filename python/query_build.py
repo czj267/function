@@ -6,9 +6,14 @@ class QueryBuilder:
         """
         self.__table_name = ''
         self.__select = None
+        self.__join = []
         self.__insert = None
         self.__update = None
         self.__delete = None
+
+        self.__duplicate_insert_data = None
+        self.__duplicate_update_key = None
+        self.__duplicate_const_data = None
 
         self.__where_list = []
         self.__group_by = ''
@@ -26,9 +31,14 @@ class QueryBuilder:
         """
         self.__table_name = ''
         self.__select = None
+        self.__join = []
         self.__insert = None
         self.__update = None
         self.__delete = None
+
+        self.__duplicate_insert_data = None
+        self.__duplicate_update_key = None
+        self.__duplicate_const_data = None
 
         self.__where_list = []
         self.__group_by = ''
@@ -59,6 +69,15 @@ class QueryBuilder:
             return self
         return self
 
+    def join(self, table, on):
+        """
+        join
+        table:指定表名 b
+        on：指定连接条件 a.c=b.d
+        """
+        self.__join.append((table, on))
+        return self
+
     def insert(self, data):
         """
         data:dict,
@@ -87,6 +106,33 @@ class QueryBuilder:
             self.__update.update(data)
         return self
 
+    def insert_or_update(self, insert_data, update_key=True, const_data=None):
+        """
+        支持多次调用，如果指定update 则 以最后一次指定的为准
+        insert_data:要插入的值
+        update_key: True 将insert_data的key全部用于更新，False，不更新，list 指定要更新的key，
+        const_data: dict 指定额外要更新的常量，格式和update的参数相同
+
+        插入或者更新：insert into on duplicate key update
+        insert into topic(topicName) VALUES ("a") ON DUPLICATE KEY UPDATE topicName=values(topicName)
+        """
+        if not self.__duplicate_insert_data:
+            self.__duplicate_insert_data = []
+
+        if isinstance(insert_data, dict):
+            self.__duplicate_insert_data.append(insert_data)
+        else:
+            self.__duplicate_insert_data += insert_data
+
+        self.__duplicate_update_key = update_key
+
+        if not self.__duplicate_const_data:
+            self.__duplicate_const_data = const_data
+        else:
+            self.__duplicate_const_data.update(const_data)
+
+        return self
+
     def delete(self):
         self.__delete = True
         return self
@@ -94,6 +140,17 @@ class QueryBuilder:
     def where(self, where):
         """
         与前面的条件用and拼接
+        1. dict
+        {
+            'a':'b', # a = b  默认用 = 连接
+            'b':['>',1], # b > 1, 或者是元组
+            'bbb': ['between', (1, 2)], # 指定between条件
+        }
+
+        2. 传list 或 tuple
+        [['field','op','val'],['a','=','b'],['bb','between',(1,2)]
+
+
         a = 1 and c = 1 or d = 3
         like,=,!=,>,in,between
         and
@@ -241,7 +298,6 @@ class QueryBuilder:
                 op = item[1].strip().upper()
                 op_val = item[2]
                 if op == 'IN' or op == 'NOT IN':
-
                     if not op_val or not (isinstance(op_val, (list, tuple))):
                         continue
 
@@ -337,7 +393,10 @@ class QueryBuilder:
         if isinstance(where, dict):
             self.__where_list.append(action)
             for field, val in where.items():
-                self.__where_list.append((field, '=', val))
+                if isinstance(val, (list, tuple)):
+                    self.__where_list.append((field, val[0], val[1]))
+                else:
+                    self.__where_list.append((field, '=', val))
             return self
 
         elif isinstance(where, (list, tuple)):
@@ -379,13 +438,35 @@ class QueryBuilder:
 
         return fields, values
 
+    def __duplicate_update(self):
+        # key=VALUES(key), a = c
+        update = ''
+        if self.__duplicate_update_key is True:
+            # 所有insert data都用于更新
+            for key in self.__duplicate_insert_data[0].keys():
+                update += "`%s` = VALUES(`%s`)," % (key, key)
+        elif isinstance(self.__duplicate_update_key, (list, tuple)):
+            # 指定部分key用于更新
+            for key in self.__duplicate_update_key:
+                update += "`%s` = VALUES(`%s`)," % (key, key)
+
+        if isinstance(self.__duplicate_const_data, dict):
+            # 处理指定的常量更新
+            update += self.__handle_update_set(self.__duplicate_const_data) + ','
+
+        return update[:len(update) - 1]
+
     def __update_sets(self):
         """
         data字典转成update语法
         返回带占位符字符串
         """
+        return self.__handle_update_set(self.__update)
+
+    def __handle_update_set(self, update_data):
+        # 处理update set 后面的拼接，返回拼接后的占位符并把值插入self.__values
         sets = ''
-        for key, val in self.__update.items():
+        for key, val in update_data.items():
             # a=b,c=d
             if isinstance(val, (list, tuple)):
                 sets += "`%s` = `%s` %s " % (key, val[0], val[1]) + "%s,"
@@ -396,12 +477,21 @@ class QueryBuilder:
 
         return sets[:len(sets) - 1]
 
+    def __join_list(self):
+        join = ''
+        for join_item in self.__join:
+            join += "join %s on %s " % join_item
+        return join
+
     def __concat_sql(self):
         """
         拼接sql，返回带占位符的sql拼接
         """
         if self.__select:
+            # 查询语句
             sql = "SELECT %s FROM %s " % (self.__select, self.__table_name,)
+            if self.__join:
+                sql += "%s " % self.__join_list()
             if self.__where_list:
                 sql += "WHERE %s " % self.get_where()
             if self.__group_by:
@@ -413,10 +503,12 @@ class QueryBuilder:
 
             return sql
         elif self.__insert:
+            # 插入语句
             fields, values = self.__insert_values()
             sql = "INSERT IN TO `%s`(%s) VALUES %s" % (self.__table_name, fields, values)
             return sql
         elif self.__update:
+            # 更新语句
             sql = "UPDATE `%s` SET %s " % (self.__table_name, self.__update_sets())
             if self.__where_list:
                 sql += "WHERE %s " % self.get_where()
@@ -426,9 +518,28 @@ class QueryBuilder:
                 sql += "OFFSET %s " % self.__offset
             return sql
         elif self.__delete:
+            # 删除
             sql = "DELETE FROM `%s` " % (self.__table_name,)
             if self.__where_list:
                 sql += "WHERE %s " % self.get_where()
+            if self.__limit:
+                sql += "LIMIT %s " % self.__limit
+            if self.__offset:
+                sql += "OFFSET %s " % self.__offset
+            return sql
+        elif self.__duplicate_insert_data:
+            # 插入或更新
+            self.__insert = self.__duplicate_insert_data
+            fields, values = self.__insert_values()
+            # ON DUPLICATE KEY UPDATE topicName=values(topicName)
+            duplicate_update = self.__duplicate_update()
+            if duplicate_update:
+                sql = "INSERT IN TO `%s`(%s) VALUES %s ON DUPLICATE KEY UPDATE %s " % (
+                    self.__table_name, fields, values, duplicate_update)
+            else:
+                sql = "INSERT IN TO `%s`(%s) VALUES %s " % (
+                    self.__table_name, fields, values)
+
             if self.__limit:
                 sql += "LIMIT %s " % self.__limit
             if self.__offset:
@@ -446,6 +557,38 @@ class QueryBuilder:
 
 if __name__ == "__main__":
     query = QueryBuilder().table("tab")
+
+    q = query.where({'a': 'c', 'd': 'f', 'kk': ('>', 10), 'bbb': ['between', (1, 2)]}) \
+        .where([('a', 'like', '%s'), ('c', '>', 10)]) \
+        .where_or({'o1': 'jjj'}) \
+        .where({'k': 'g'}) \
+        .where_in('ii', (1, 'dd', 3,)) \
+        .where_not_in('jj', (3, 5, 6,)) \
+        .where_raw(*QueryBuilder().where({'jjj': 'myjjj'}).get_where(True)) \
+        .where_raw('a=c and d=f or kg=g') \
+        .where_raw("k=%s and j = %s and kk in %s", (1, 3, [3, 4, 5])) \
+        .where({'k': 'j', 'jk': 'jj', "jj": "ccc"}) \
+        .group_by('a desc,b asc') \
+        .offset(11) \
+        .limit(12)
+
+    print(q.select('a,b,c').sql())
+    # print(q.delete().sql())
+    exit()
+
+    # join
+
+    query.select('a,b,c').join('c', 'a.c=c.d').where({'a': 'd'})
+
+    print(query.sql())
+    exit()
+
+    # insert or update
+    query.insert_or_update([{'a': 'b', 'c': 'd'}, {'a': 'b', 'c': 'd'}], True, {'c': ['kk', '+', 1]}) \
+        .insert_or_update({'a': 'zzv', 'c': 'jj'}, True, {'jj': 'll'})
+
+    print(query.sql())
+    exit()
 
     # delete
     print(query.delete().prepare_sql())
@@ -466,20 +609,3 @@ if __name__ == "__main__":
     print(s)
     exit()
     # print(QueryBuilder().where({'jjj': 'myjjj'}).get_where(True,True))
-
-    q = query.where({'a': 'c', 'd': 'f'}) \
-        .where([('a', 'like', '%s'), ('c', '>', 10)]) \
-        .where_or({'o1': 'jjj'}) \
-        .where({'k': 'g'}) \
-        .where_in('ii', (1, 'dd', 3,)) \
-        .where_not_in('jj', (3, 5, 6,)) \
-        .where_raw(*QueryBuilder().where({'jjj': 'myjjj'}).get_where(True)) \
-        .where_raw('a=c and d=f or kg=g') \
-        .where_raw("k=%s and j = %s and kk in %s", (1, 3, [3, 4, 5])) \
-        .where({'k': 'j', 'jk': 'jj', "jj": "ccc"}) \
-        .group_by('a desc,b asc') \
-        .offset(11) \
-        .limit(12)
-
-    # print(q.select('a,b,c').sql())
-    print(q.delete().sql())
